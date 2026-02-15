@@ -1,4 +1,4 @@
-import {HmrContext, ResolvedConfig, ViteDevServer} from "vite";
+import {HmrContext, ResolvedConfig, ViteDevServer, Plugin, UserConfig} from "vite";
 import {createFilter, FilterPattern} from '@rollup/pluginutils';
 import path from "path";
 import fs from "fs";
@@ -32,9 +32,11 @@ interface SpringBootOptions {
      * Defaults to Maven if not specified.
      */
     buildSystem?: BuildSystem;
+
+    entryPoints?: string | string[]
 }
 
-export default function springBoot(options: SpringBootOptions = {}) {
+export default function springBoot(options: SpringBootOptions = {}): Plugin {
     const buildSystem = options.buildSystem || BuildSystem.Maven;
 
     const targetDir: string = path.resolve(process.cwd(),
@@ -72,6 +74,42 @@ export default function springBoot(options: SpringBootOptions = {}) {
 
     return {
         name: "vite-plugin-spring-boot",
+        config(config: UserConfig) {
+          if (!config.root) {
+            config.root = path.join(process.cwd(), "./src/main/resources")
+          }
+          if (!config.server) {
+            config.server = {
+              proxy: {
+                // Proxy all backend requests to Spring Boot except for static assets
+                "^/(?!static|assets|@|.*\\.(js|css|png|svg|jpg|jpeg|gif|ico|woff|woff2)$)":
+                    {
+                      target: "http://localhost:8080", // Proxy to Spring Boot backend
+                      changeOrigin: true,
+                      secure: false,
+                    },
+              },
+              watch: {
+                ignored: ["build/**", "target/**"],
+              },
+            }
+          }
+          if (!config.build) {
+            config.build = {
+              manifest: true,
+              rollupOptions: {
+                input: options.entryPoints,
+              },
+              copyPublicDir: false,
+              emptyOutDir: true,
+              outDir: path.join(__dirname, buildSystem === BuildSystem.Maven ? './target/classes/static' : `./build/resources/main/static`),
+            }
+          }
+          if (verbose) {
+            console.info(config)
+          }
+        },
+
         configResolved(resolvedConfig: ResolvedConfig) {
             config = resolvedConfig;
         },
@@ -100,8 +138,8 @@ export default function springBoot(options: SpringBootOptions = {}) {
             const rootDir = config.root;
             const currentFilter = initializeFilter(rootDir);
 
-            copyFiles(currentFilter, rootDir, outputDir, verbose);
-        }
+            await copyFiles(currentFilter, rootDir, outputDir, verbose);
+        },
     }
 }
 
